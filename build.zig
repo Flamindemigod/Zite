@@ -8,6 +8,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib_mod.addCSourceFile(.{.file = b.path("sqlite/sqlite3.c")});
+    lib_mod.addIncludePath(b.path("sqlite"));
+    lib_mod.link_libc = true;
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
