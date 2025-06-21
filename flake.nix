@@ -24,12 +24,12 @@
           function build {
               if [ -z "$1" ]
               then
-                zig build -Doptimize=$OPT;
+                zig build -fincremental -Doptimize=$OPT;
               else
-                zig build -Doptimize=$OPT "$1";
+                zig build -fincremental -Doptimize=$OPT "$1";
               fi
           }
-          function check { zig build -Doptimize=$OPT --watch check;}
+          function check { zig build -Doptimize=$OPT -fincremental --watch check;}
           zig zen
         '';
       };
