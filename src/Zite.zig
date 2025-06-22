@@ -5,6 +5,7 @@ const sqlite = @cImport({
 
 const Zite = @This();
 pub const Constraints = @import("Constraints.zig");
+pub const Utils = @import("Utils.zig");
 db: *sqlite.sqlite3,
 
 //Only using the Valid Flags for Open.
@@ -82,43 +83,6 @@ pub fn close(self: *const Zite) void {
     _ = sqlite.sqlite3_close_v2(self.db);
 }
 
-pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) []const u8 {
-    const QueryString = comptime blk: {
-        var Query: []const u8 = "CREATE TABLE IF NOT EXISTS " ++ name ++ "(";
-        switch (@typeInfo(table)) {
-            .@"struct" => |s| {
-                for (s.fields, 0..) |f, i| {
-                    switch (@typeInfo(f.type)) {
-                        .@"struct" => {
-                            const props = Constraints.resolveProps(f.type);
-                            if (props.len != 0) {
-                                Query = Query ++ f.name;
-                                switch (@typeInfo(@FieldType(f.type, "inner"))) {
-                                    .int => Query = Query ++ " INTEGER ",
-                                    else => |t| @compileLog(t),
-                                }
-                                for (props, 0..) |prop, pi| {
-                                    Query = Query ++ Constraints.Props.Values[@intFromEnum(prop)];
-                                    if (pi < props.len - 1) Query = Query ++ " ";
-                                }
-                            }
-                        },
-                        .int => {
-                            Query = Query ++ f.name ++ " INTEGER";
-                        },
-                        else => |t| @compileLog(t),
-                    }
-                    if (i < s.fields.len - 1) Query = Query ++ ", ";
-                }
-            },
-            else => |t| @compileLog(t),
-        }
-        Query = Query ++ ");";
-        break :blk Query;
-    };
-    return QueryString;
-}
-
 test "Open DB" {
     const testing = std.testing;
     const db = try Zite.open(".TestOpen.db", &.{ .create, .readwrite });
@@ -142,7 +106,7 @@ test "Register Table" {
     defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
     defer db.close();
 
-    try testing.expectEqualStrings(TableToCreateStatement(test_struct, "Main"), "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
+    try testing.expectEqualStrings(Utils.TableToCreateStatement(test_struct, "Main"), "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
 
     try testing.expect(true);
 }
