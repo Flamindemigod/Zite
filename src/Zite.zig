@@ -82,8 +82,7 @@ pub fn close(self: *const Zite) void {
     _ = sqlite.sqlite3_close_v2(self.db);
 }
 
-pub fn registerTable(self: *const Zite, comptime table: type, comptime name: []const u8) void {
-    _ = self;
+pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) []const u8 {
     const QueryString = comptime blk: {
         var Query: []const u8 = "CREATE TABLE IF NOT EXISTS " ++ name ++ "(";
         switch (@typeInfo(table)) {
@@ -117,7 +116,7 @@ pub fn registerTable(self: *const Zite, comptime table: type, comptime name: []c
         Query = Query ++ ");";
         break :blk Query;
     };
-    std.debug.print("{s}\n", .{QueryString});
+    return QueryString;
 }
 
 test "Open DB" {
@@ -142,9 +141,8 @@ test "Register Table" {
     const db = try Zite.open(".TestRegister.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
     defer db.close();
-    {
-        db.registerTable(test_struct, "Main");
-    }
+
+    try testing.expectEqualStrings(TableToCreateStatement(test_struct, "Main"), "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
 
     try testing.expect(true);
 }
