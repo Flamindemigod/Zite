@@ -4,7 +4,7 @@ const sqlite = @cImport({
 });
 
 const Zite = @This();
-
+pub const Constraints = @import("Constraints.zig");
 db: *sqlite.sqlite3,
 
 //Only using the Valid Flags for Open.
@@ -82,79 +82,6 @@ pub fn close(self: *const Zite) void {
     _ = sqlite.sqlite3_close_v2(self.db);
 }
 
-pub fn Key(comptime inner: type) type {
-    const p = resolveProps(inner);
-    if (p.len == 0) {
-        return struct {
-            inner: inner,
-            const Self = @This();
-            pub fn get(self: *const Self) inner {
-                return self.inner;
-            }
-            pub fn set(val: inner) Self {
-                return Self{ .inner = val };
-            }
-        };
-    } else {
-        return struct {
-            inner: @FieldType(inner, "inner"),
-            const Self = @This();
-            pub fn get(self: *const Self) @FieldType(inner, "inner") {
-                return self.inner;
-            }
-            pub fn set(val: @FieldType(inner, "inner")) Self {
-                return Self{ .inner = val };
-            }
-        };
-    }
-}
-
-pub fn Primary(comptime inner: type) type {
-    const p = resolveProps(inner);
-    if (p.len == 0) {
-        return struct {
-            inner: inner,
-            const Self = @This();
-            pub fn get(self: *const Self) inner {
-                return self.inner;
-            }
-            pub fn set(val: inner) Self {
-                return Self{ .inner = val };
-            }
-        };
-    } else {
-        return struct {
-            inner: @FieldType(inner, "inner"),
-            const Self = @This();
-            pub fn get(self: *const Self) @FieldType(inner, "inner") {
-                return self.inner;
-            }
-            pub fn set(val: @FieldType(inner, "inner")) Self {
-                return Self{ .inner = val };
-            }
-        };
-    }
-}
-
-fn resolveProps(comptime t: type) []Props {
-    var prop_buffer: [16]Props = undefined;
-    var count: u4 = 0;
-    inline for (std.meta.fields(Props)) |v| {
-        if (std.mem.containsAtLeast(u8, @typeName(t), 1, v.name)) {
-            if (count < prop_buffer.len) {
-                prop_buffer[count] = @enumFromInt(v.value);
-                count += 1;
-            }
-        }
-    }
-    return prop_buffer[0..count];
-}
-
-const Props = enum {
-    Primary,
-    Key,
-};
-
 pub fn registerTable(self: *const Zite, comptime table: type, comptime name: []const u8) void {
     _ = self;
     const QueryString = comptime blk: {
@@ -164,7 +91,7 @@ pub fn registerTable(self: *const Zite, comptime table: type, comptime name: []c
                 for (s.fields, 0..) |f, i| {
                     switch (@typeInfo(f.type)) {
                         .@"struct" => {
-                            const props = resolveProps(f.type);
+                            const props = Constraints.resolveProps(f.type);
                             if (props.len != 0) {
                                 Query = Query ++ f.name;
                                 switch (@typeInfo(@FieldType(f.type, "inner"))) {
@@ -172,9 +99,7 @@ pub fn registerTable(self: *const Zite, comptime table: type, comptime name: []c
                                     else => |t| @compileLog(t),
                                 }
                                 for (props, 0..) |prop, pi| {
-                                    for (@tagName(prop)) |p| {
-                                        Query = Query ++ [1]u8{std.ascii.toUpper(p)};
-                                    }
+                                    Query = Query ++ Constraints.Props.Values[@intFromEnum(prop)];
                                     if (pi < props.len - 1) Query = Query ++ " ";
                                 }
                             }
@@ -204,8 +129,12 @@ test "Open DB" {
 }
 
 test "Register Table" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+
     const test_struct = struct {
-        id: Primary(Key(u8)),
+        id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
         value: u16,
     };
 
