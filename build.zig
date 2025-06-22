@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    lib_mod.addCSourceFile(.{.file = b.path("sqlite/sqlite3.c")});
+    lib_mod.addCSourceFile(.{ .file = b.path("sqlite/sqlite3.c") });
     lib_mod.addIncludePath(b.path("sqlite"));
     lib_mod.link_libc = true;
 

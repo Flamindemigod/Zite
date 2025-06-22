@@ -18,18 +18,21 @@
           gdb
           zig
           zls
+          sqlitebrowser
+            libsForQt5.qtstyleplugins
+            sqlite-web
           ];
         shellHook = ''
           export OPT="Debug"
           function build {
               if [ -z "$1" ]
               then
-                zig build -fincremental -Doptimize=$OPT;
+                zig build -Doptimize=$OPT;
               else
-                zig build -fincremental -Doptimize=$OPT "$1";
+                zig build -Doptimize=$OPT "$1";
               fi
           }
-          function check { zig build -Doptimize=$OPT -fincremental --watch check;}
+          function check { zig build -Doptimize=$OPT --watch check;}
           zig zen
         '';
       };
