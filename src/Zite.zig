@@ -43,6 +43,8 @@ const ZiteError = error{
     ROnlyRollback,
     ROnlyDBMoved,
 
+    //Col Error
+    Range,
     //Exec Errors
     Constraint,
 };
@@ -53,6 +55,7 @@ inline fn ToError(val: c_int) ZiteError!void {
     switch (val) {
         sqlite.SQLITE_CANTOPEN => return error.CantOpen,
         sqlite.SQLITE_CONSTRAINT => return error.Constraint,
+        sqlite.SQLITE_RANGE => return error.Range,
         else => {
             std.debug.print("[Zite]: RC:{d}. sqlite error code is not handled\n", .{val});
             return error.Generic;
@@ -113,7 +116,6 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
                 inline for (std.meta.fields(RetType)) |field| {
                     if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
                         if (comptime Constraints.resolveProps(field.type).len != 0) {
-                            //@field(t.*, field.name).inner = std.fmt.parseInt(@FieldType(field.type, "inner"), std.mem.span(data[i]), '_') catch unreachable;
                             @field(t.*, field.name).inner = ParseType(@FieldType(field.type, "inner"), data[i]);
                         } else {
                             @field(t.*, field.name) = ParseType(field.type, data[i]);
@@ -128,6 +130,35 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
     var builder: ?std.ArrayList(RetType) = if (RetType != void) std.ArrayList(RetType).init(allocator) else null;
     try unwrapError(self.db, sqlite.sqlite3_exec(self.db, stmt.ptr, exec_callback, @ptrCast(&builder), null));
     return builder;
+}
+
+pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype) !void {
+    var ppStmt: ?*sqlite.sqlite3_stmt = null;
+    try unwrapError(self.db, sqlite.sqlite3_prepare_v2(self.db, stmt.ptr, stmt.len, &ppStmt, null));
+    inline for (std.meta.fields(@TypeOf(value)), 1..) |field, i| {
+        const has_props = comptime Constraints.resolveProps(field.type).len != 0;
+        const field_type = if (has_props) @FieldType(field.type, "inner") else field.type;
+        switch (@typeInfo(field_type)) {
+            .int => try unwrapError(
+                self.db,
+                sqlite.sqlite3_bind_int(
+                    ppStmt,
+                    i,
+                    @intCast(if (has_props) @field(value, field.name).inner else @field(value, field.name)),
+                ),
+            ),
+            .@"enum" => try unwrapError(
+                self.db,
+                sqlite.sqlite3_bind_int(
+                    ppStmt,
+                    i,
+                    @intFromEnum(if (has_props) @field(value, field.name).inner else @field(value, field.name)),
+                ),
+            ),
+            else => |t| @compileLog(t),
+        }
+    }
+    try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
 }
 
 test "Open DB" {
@@ -177,7 +208,6 @@ test "Exec Callback" {
     _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (1, 2);");
     var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
     defer ret.?.deinit();
-    std.debug.print("{d}\n", .{ret.?.items.len});
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = 1 });
     try std.testing.expectEqualDeep(ret.?.items[1], test_struct{ .id = .set(1), .value = 2 });
 }
@@ -227,4 +257,44 @@ test "Zite Enum" {
     var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
     defer ret.?.deinit();
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
+}
+
+test "Zite Insert" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+
+    const test_struct = struct {
+        const v = enum {
+            Test,
+            Hello,
+            Bruh,
+        };
+        id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
+        value: NotNull(v),
+    };
+    const testing = std.testing;
+    const db = try Zite.open(".TestInsert.db", &.{ .create, .readwrite });
+    defer (std.fs.cwd().deleteFile(".TestInsert.db") catch {});
+    defer db.close();
+    {
+        const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+        _ = try db.exec(void, testing.allocator, stmt);
+    }
+    var t = test_struct{ .id = .set(0), .value = .set(.Bruh) };
+    const stmt = comptime Utils.InsertStatement(test_struct, "Main");
+    try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
+    {
+        try db.bindAndExec(stmt, t);
+        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        defer ret.?.deinit();
+        try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Bruh) });
+    }
+    {
+        t.value = .set(.Hello);
+        try db.bindAndExec(stmt, t);
+        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        defer ret.?.deinit();
+        try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
+    }
 }
