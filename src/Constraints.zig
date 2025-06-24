@@ -14,7 +14,7 @@
 const std = @import("std");
 
 //Helper function to resolve the properties;
-pub fn resolveProps(comptime t: type) []Props {
+pub inline fn resolveProps(comptime t: type) []Props {
     var prop_buffer: [16]Props = undefined;
     var count: u4 = 0;
     @setEvalBranchQuota(100000);

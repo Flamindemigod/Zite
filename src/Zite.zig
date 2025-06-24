@@ -27,8 +27,9 @@ const OpenFlags = enum(c_int) {
 
 const NonErrorRetCodes: []const c_int = &.{ sqlite.SQLITE_OK, sqlite.SQLITE_ROW, sqlite.SQLITE_DONE };
 
-const OpenError = error{
+const ZiteError = error{
     Generic,
+    //Open Errors
     Perm,
     Corrupt,
     NotFound,
@@ -41,13 +42,18 @@ const OpenError = error{
     ROnlyRecovery,
     ROnlyRollback,
     ROnlyDBMoved,
+
+    //Exec Errors
+    Constraint,
 };
+
 
 //Yoinked using the error message and code
 //Msg crossref with sqlite.c:184202
-inline fn ToError(val: c_int) OpenError!void {
+inline fn ToError(val: c_int) ZiteError!void {
     switch (val) {
         sqlite.SQLITE_CANTOPEN => return error.CantOpen,
+        sqlite.SQLITE_CONSTRAINT => return error.Constraint,
         else => {
             std.debug.print("[Zite]: RC:{d}. sqlite error code is not handled\n", .{val});
             return error.Generic;
@@ -55,7 +61,7 @@ inline fn ToError(val: c_int) OpenError!void {
     }
 }
 
-fn unwrapError(conn: ?*sqlite.sqlite3, val: c_int) !void {
+inline fn unwrapError(conn: ?*sqlite.sqlite3, val: c_int) ZiteError!void {
     const stderr = std.io.getStdErr().writer();
     if (conn == null) {
         stderr.print("[Zite]: {s}\n", .{sqlite.sqlite3_errmsg(conn)}) catch {};
@@ -67,7 +73,7 @@ fn unwrapError(conn: ?*sqlite.sqlite3, val: c_int) !void {
     }
 }
 
-pub fn open(path: []const u8, flags: []const OpenFlags) OpenError!Zite {
+pub fn open(path: []const u8, flags: []const OpenFlags) ZiteError!Zite {
     var db: ?*sqlite.sqlite3 = null;
     var flagVal: c_int = 0;
     for (flags) |f| {
@@ -81,6 +87,34 @@ pub fn open(path: []const u8, flags: []const OpenFlags) OpenError!Zite {
 pub fn close(self: *const Zite) void {
     //We ignore the RetCode because we are closing regardless.
     _ = sqlite.sqlite3_close_v2(self.db);
+}
+
+pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Allocator, stmt: []const u8) !?std.ArrayList(RetType) {
+    const exec_callback = struct {
+        fn cb(ctx: ?*anyopaque, count: c_int, data: [*c][*c]u8, cols: [*c][*c]u8) callconv(.C) c_int {
+            const builder: *?std.ArrayList(RetType) = @ptrCast(@alignCast(ctx));
+            if(RetType == void) return 0;
+            if(@typeInfo(RetType) != .@"struct") @compileError("We dont support returning anything other than a struct\n");
+            const t = builder.*.?.addOne() catch @panic("Out of Memory");
+            for(0..@intCast(count)) |i| {
+               inline for(std.meta.fields(RetType))|field|{
+                    if(std.mem.eql(u8, field.name,std.mem.span(cols[i]))){
+                        if(comptime Constraints.resolveProps(field.type).len != 0) {
+                            @field(t.*, field.name).inner = std.fmt.parseInt(@FieldType(field.type, "inner"), std.mem.span(data[i]), '_') catch unreachable;
+                        } else {
+                            @field(t.*, field.name) = std.fmt.parseInt(field.type, std.mem.span(data[i]), '_') catch unreachable;
+                        }
+
+                    }
+                }
+            }
+            return 0;
+        }
+    }.cb;
+
+    var builder: ?std.ArrayList(RetType) = if (RetType != void) std.ArrayList(RetType).init(allocator) else null;
+    try unwrapError(self.db, sqlite.sqlite3_exec(self.db, stmt.ptr, exec_callback, @ptrCast(&builder), null));
+    return builder;
 }
 
 test "Open DB" {
@@ -105,6 +139,50 @@ test "Register Table" {
     const db = try Zite.open(".TestRegister.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
     defer db.close();
+    const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+    try testing.expectEqualStrings(stmt, "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
+    _ = try db.exec(void, testing.allocator, stmt);
+}
 
-    try testing.expectEqualStrings(Utils.TableToCreateStatement(test_struct, "Main"), "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
+test "Exec Callback" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+
+    const test_struct = struct {
+        id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
+        value: u16,
+    };
+
+    const testing = std.testing;
+    const db = try Zite.open(".TestRegister.db", &.{ .create, .readwrite });
+    defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
+    defer db.close();
+    const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+    _ = try db.exec(void, testing.allocator, stmt);
+    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
+    var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+    defer ret.?.deinit();
+    try std.testing.expect(true);
+}
+
+
+test "Exec Insert Constraint Error" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+
+    const test_struct = struct {
+        id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
+        value: u16,
+    };
+
+    const testing = std.testing;
+    const db = try Zite.open(".TestRegister.db", &.{ .create, .readwrite });
+    defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
+    defer db.close();
+    const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+    _ = try db.exec(void, testing.allocator, stmt);
+    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
+    try std.testing.expectError(ZiteError.Constraint, db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);"));
 }
