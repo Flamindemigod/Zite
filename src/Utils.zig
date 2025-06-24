@@ -22,7 +22,7 @@ pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) [
                                 }
                             }
                         },
-                        .int => {
+                        inline .int, .@"enum" => {
                             Query = Query ++ f.name ++ " INTEGER";
                         },
                         else => |t| @compileLog(t),
