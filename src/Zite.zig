@@ -214,7 +214,7 @@ test "Zite Enum" {
             Bruh,
         };
         id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
-        value: v,
+        value: NotNull(v),
     };
 
     const testing = std.testing;
@@ -226,5 +226,5 @@ test "Zite Enum" {
     _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
     var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
     defer ret.?.deinit();
-    try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .Hello });
+    try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
 }

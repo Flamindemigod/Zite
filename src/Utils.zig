@@ -13,7 +13,7 @@ pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) [
                             if (props.len != 0) {
                                 Query = Query ++ f.name;
                                 switch (@typeInfo(@FieldType(f.type, "inner"))) {
-                                    .int => Query = Query ++ " INTEGER ",
+                                    inline .int, .@"enum" => Query = Query ++ " INTEGER ",
                                     else => |t| @compileLog(t),
                                 }
                                 for (props, 0..) |prop, pi| {
