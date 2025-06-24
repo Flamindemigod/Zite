@@ -107,6 +107,4 @@ test "Register Table" {
     defer db.close();
 
     try testing.expectEqualStrings(Utils.TableToCreateStatement(test_struct, "Main"), "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
-
-    try testing.expect(true);
 }
