@@ -94,13 +94,17 @@ pub fn close(self: *const Zite) void {
 inline fn ParseType(comptime field: type, value: [*c]u8) field {
     switch (@typeInfo(field)) {
         .int => {
-            return std.fmt.parseInt(field, std.mem.span(value), '_') catch unreachable;
+            return std.fmt.parseInt(field, std.mem.span(value), 0) catch unreachable;
         },
         .@"enum" => |e| {
             return @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(value), '_') catch unreachable);
         },
+        .optional => |o| {
+            if (std.mem.eql(u8, std.mem.span(value), "null")) return null;
+            return ParseType(o.child, value);
+        },
         else => |s| {
-            @compileLog(s);
+            @compileLog(s, value);
         },
     }
 }
@@ -132,31 +136,39 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
     return builder;
 }
 
+fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: c_int, comptime fieldType: type, value: fieldType) !void {
+    const has_props = comptime Constraints.resolveProps(fieldType).getSetProps().len != 0;
+    const field_type = if (has_props) @FieldType(fieldType, "inner") else fieldType;
+    switch (@typeInfo(field_type)) {
+        .int => try unwrapError(
+            self.db,
+            sqlite.sqlite3_bind_int(
+                stmt,
+                idx,
+                @intCast(if (has_props) value.inner else value),
+            ),
+        ),
+        .@"enum" => try unwrapError(
+            self.db,
+            sqlite.sqlite3_bind_int(
+                stmt,
+                idx,
+                @intFromEnum(if (has_props) value.inner else value),
+            ),
+        ),
+        .optional => |o| {
+            if (value != null) return self.bindValue(stmt, idx, o.child, value.?);
+            return try unwrapError(self.db, sqlite.sqlite3_bind_null(stmt, idx));
+        },
+        else => |t| @compileLog(t),
+    }
+}
+
 pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype) !void {
     var ppStmt: ?*sqlite.sqlite3_stmt = null;
     try unwrapError(self.db, sqlite.sqlite3_prepare_v2(self.db, stmt.ptr, stmt.len, &ppStmt, null));
     inline for (std.meta.fields(@TypeOf(value)), 1..) |field, i| {
-        const has_props = comptime Constraints.resolveProps(field.type).getSetProps().len != 0;
-        const field_type = if (has_props) @FieldType(field.type, "inner") else field.type;
-        switch (@typeInfo(field_type)) {
-            .int => try unwrapError(
-                self.db,
-                sqlite.sqlite3_bind_int(
-                    ppStmt,
-                    i,
-                    @intCast(if (has_props) @field(value, field.name).inner else @field(value, field.name)),
-                ),
-            ),
-            .@"enum" => try unwrapError(
-                self.db,
-                sqlite.sqlite3_bind_int(
-                    ppStmt,
-                    i,
-                    @intFromEnum(if (has_props) @field(value, field.name).inner else @field(value, field.name)),
-                ),
-            ),
-            else => |t| @compileLog(t),
-        }
+        try self.bindValue(ppStmt, i, field.type, @field(value, field.name));
     }
     try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
 }
@@ -271,7 +283,7 @@ test "Zite Insert" {
             Bruh,
         };
         id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
-        value: NotNull(v) =  .set(.Test),
+        value: NotNull(v) = .set(.Test),
     };
     const testing = std.testing;
     const db = try Zite.open(".TestInsert.db", &.{ .create, .readwrite });
@@ -296,5 +308,40 @@ test "Zite Insert" {
         var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
+    }
+}
+
+test "Zite Null" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+
+    const test_struct = struct {
+        id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
+        value: ?u32 = 69420,
+    };
+    const testing = std.testing;
+    const db = try Zite.open(".TestNull.db", &.{ .create, .readwrite });
+    defer (std.fs.cwd().deleteFile(".TestNull.db") catch {});
+    defer db.close();
+    {
+        const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+        _ = try db.exec(void, testing.allocator, stmt);
+    }
+    var t = test_struct{};
+    const stmt = comptime Utils.InsertStatement(test_struct, "Main");
+    try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
+    {
+        try db.bindAndExec(stmt, t);
+        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        defer ret.?.deinit();
+        try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 69420 }, ret.?.items[0]);
+    }
+    {
+        t.value = 42069;
+        try db.bindAndExec(stmt, t);
+        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        defer ret.?.deinit();
+        try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 42069 }, ret.?.items[0]);
     }
 }

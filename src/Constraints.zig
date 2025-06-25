@@ -57,6 +57,7 @@ pub inline fn resolveProps(comptime t: type) PropFields {
             prop_buffer = @bitCast(s.fields[1].defaultValue().?);
         },
         .@"enum" => {},
+        .optional => |o| return resolveProps(o.child),
         else => |e| @compileLog(e),
     }
     return prop_buffer;
