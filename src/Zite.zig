@@ -115,7 +115,7 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
             for (0..@intCast(count)) |i| {
                 inline for (std.meta.fields(RetType)) |field| {
                     if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
-                        if (comptime Constraints.resolveProps(field.type).len != 0) {
+                        if (comptime Constraints.resolveProps(field.type).getSetProps().len != 0) {
                             @field(t.*, field.name).inner = ParseType(@FieldType(field.type, "inner"), data[i]);
                         } else {
                             @field(t.*, field.name) = ParseType(field.type, data[i]);
@@ -136,7 +136,7 @@ pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype)
     var ppStmt: ?*sqlite.sqlite3_stmt = null;
     try unwrapError(self.db, sqlite.sqlite3_prepare_v2(self.db, stmt.ptr, stmt.len, &ppStmt, null));
     inline for (std.meta.fields(@TypeOf(value)), 1..) |field, i| {
-        const has_props = comptime Constraints.resolveProps(field.type).len != 0;
+        const has_props = comptime Constraints.resolveProps(field.type).getSetProps().len != 0;
         const field_type = if (has_props) @FieldType(field.type, "inner") else field.type;
         switch (@typeInfo(field_type)) {
             .int => try unwrapError(
@@ -281,7 +281,7 @@ test "Zite Insert" {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
         _ = try db.exec(void, testing.allocator, stmt);
     }
-    var t = test_struct{ .id = .set(0), .value = .set(.Bruh) };
+    var t = test_struct{ .value = .set(.Bruh) };
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
     {

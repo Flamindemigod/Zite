@@ -9,7 +9,7 @@ pub fn InsertStatement(comptime table: type, comptime name: []const u8) []const 
                 var primary: []const u8 = undefined;
                 for (s.fields, 0..) |f, i| {
                     const props = Constraints.resolveProps(f.type);
-                    if (std.mem.containsAtLeast(Constraints.Props, props, 1, &[1]Constraints.Props{.PrimaryKey})) primary = f.name;
+                    if (props.PrimaryKey) primary = f.name;
                     Query = Query ++ f.name;
                     if (i < s.fields.len - 1) Query = Query ++ ", ";
                 }
@@ -43,15 +43,16 @@ pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) [
                     switch (@typeInfo(f.type)) {
                         .@"struct" => {
                             const props = Constraints.resolveProps(f.type);
-                            if (props.len != 0) {
+                            if (props.getSetProps().len != 0) {
                                 Query = Query ++ f.name;
                                 switch (@typeInfo(@FieldType(f.type, "inner"))) {
                                     inline .int, .@"enum" => Query = Query ++ " INTEGER ",
                                     else => |t| @compileLog(t),
                                 }
-                                for (props, 0..) |prop, pi| {
+                                const propArr = props.getSetProps();
+                                for (propArr, 0..) |prop, pi| {
                                     Query = Query ++ Constraints.Props.Values[@intFromEnum(prop)];
-                                    if (pi < props.len - 1) Query = Query ++ " ";
+                                    if (pi < propArr.len - 1) Query = Query ++ " ";
                                 }
                             }
                         },

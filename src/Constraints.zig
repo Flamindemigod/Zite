@@ -13,38 +13,60 @@
 
 const std = @import("std");
 
-//Helper function to resolve the properties;
-pub inline fn resolveProps(comptime t: type) []Props {
-    var prop_buffer: [16]Props = undefined;
-    var count: u4 = 0;
-    @setEvalBranchQuota(100000);
-    inline for (std.meta.fields(Props)) |v| {
-        if (std.mem.containsAtLeast(u8, @typeName(t), 1, v.name)) {
-            if (count < prop_buffer.len) {
-                prop_buffer[count] = @enumFromInt(v.value);
-                count += 1;
-            }
-        }
-    }
-    return prop_buffer[0..count];
-}
 //List of props and Values that basically get injected into the statement
 pub const Props = enum {
     PrimaryKey,
     UniqueReplace,
     NotNull,
+    Default, 
     pub const Values: []const []const u8 = &.{
         "PRIMARY KEY",
         "UNIQUE ON CONFLICT REPLACE",
         "NOT NULL ON CONFLICT FAIL",
+        "DEFAULT",
     };
 };
+
+pub const PropFields = packed struct {
+    PrimaryKey: bool = false,
+    UniqueReplace: bool = false,
+    NotNull: bool = false,
+    Default: bool = false,
+
+    pub fn hasPropsSet(comptime self: *const PropFields) bool{
+        return (@as(u4, @bitCast(self.*)) & 1) != 0;
+    }
+
+    pub fn getSetProps(comptime self: *const PropFields) []Props {
+        var props: [std.meta.fields(Props).len]Props = undefined;
+        var count = 0;
+        for (std.meta.fields(Props)) |field|{
+            if(@as(u4, @bitCast(self.*)) & (1 << field.value) != 0) {
+                props[count] = @as(Props, @enumFromInt(field.value));
+                count += 1;
+            }
+        }
+        return props[0..count];
+    }
+};
+//Helper function to resolve the properties;
+
+pub inline fn resolveProps(comptime t: type) PropFields {
+    var prop_buffer: PropFields = .{};
+    @setEvalBranchQuota(10000);
+    inline for (std.meta.fields(Props)) |v| {
+        if (std.mem.containsAtLeast(u8, @typeName(t), 1, v.name)) {
+                @field(prop_buffer, @tagName(@as(Props, @enumFromInt(v.value)))) = true;
+        }
+    }
+    return prop_buffer;
+}
 
 //Start of the Props Types
 //-------------------------
 pub fn NotNull(comptime inner: type) type {
     const p = resolveProps(inner);
-    if (p.len == 0) {
+    if (!p.hasPropsSet()) {
         return struct {
             inner: inner,
             const Self = @This();
@@ -70,7 +92,7 @@ pub fn NotNull(comptime inner: type) type {
 }
 pub fn PrimaryKey(comptime inner: type) type {
     const p = resolveProps(inner);
-    if (p.len == 0) {
+    if (!p.hasPropsSet()) {
         return struct {
             inner: inner,
             const Self = @This();
@@ -98,7 +120,7 @@ pub fn PrimaryKey(comptime inner: type) type {
 //Sets Unique on Conflict Replace
 pub fn UniqueReplace(comptime inner: type) type {
     const p = resolveProps(inner);
-    if (p.len == 0) {
+    if (!p.hasPropsSet()) {
         return struct {
             inner: inner,
             const Self = @This();
