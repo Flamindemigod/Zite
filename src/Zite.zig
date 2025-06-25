@@ -116,7 +116,7 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
                 inline for (std.meta.fields(RetType)) |field| {
                     if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
                         if (comptime Constraints.resolveProps(field.type).getSetProps().len != 0) {
-                            @field(t.*, field.name).inner = ParseType(@FieldType(field.type, "inner"), data[i]);
+                            @field(t.*, field.name) = .set(ParseType(@FieldType(field.type, "inner"), data[i]));
                         } else {
                             @field(t.*, field.name) = ParseType(field.type, data[i]);
                         }

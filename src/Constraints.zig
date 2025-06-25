@@ -18,7 +18,7 @@ pub const Props = enum {
     PrimaryKey,
     UniqueReplace,
     NotNull,
-    Default, 
+    Default,
     pub const Values: []const []const u8 = &.{
         "PRIMARY KEY",
         "UNIQUE ON CONFLICT REPLACE",
@@ -33,15 +33,15 @@ pub const PropFields = packed struct {
     NotNull: bool = false,
     Default: bool = false,
 
-    pub fn hasPropsSet(comptime self: *const PropFields) bool{
+    pub fn hasPropsSet(comptime self: *const PropFields) bool {
         return (@as(u4, @bitCast(self.*)) & 1) != 0;
     }
 
     pub fn getSetProps(comptime self: *const PropFields) []Props {
         var props: [std.meta.fields(Props).len]Props = undefined;
         var count = 0;
-        for (std.meta.fields(Props)) |field|{
-            if(@as(u4, @bitCast(self.*)) & (1 << field.value) != 0) {
+        for (std.meta.fields(Props)) |field| {
+            if (@as(u4, @bitCast(self.*)) & (1 << field.value) != 0) {
                 props[count] = @as(Props, @enumFromInt(field.value));
                 count += 1;
             }
@@ -53,48 +53,43 @@ pub const PropFields = packed struct {
 
 pub inline fn resolveProps(comptime t: type) PropFields {
     var prop_buffer: PropFields = .{};
-    @setEvalBranchQuota(10000);
-    inline for (std.meta.fields(Props)) |v| {
-        if (std.mem.containsAtLeast(u8, @typeName(t), 1, v.name)) {
-                @field(prop_buffer, @tagName(@as(Props, @enumFromInt(v.value)))) = true;
-        }
+    switch (@typeInfo(t)) {
+        .int => {},
+        .@"struct" => |s| if (@hasField(t, "inner") and @hasField(t, "props")) {
+            prop_buffer = @bitCast(s.fields[1].defaultValue().?);
+        },
+        .@"enum" => {},
+        else => |e| @compileLog(e),
     }
     return prop_buffer;
 }
 
 //Start of the Props Types
 //-------------------------
-pub fn NotNull(comptime inner: type) type {
-    const p = resolveProps(inner);
-    if (!p.hasPropsSet()) {
-        return struct {
-            inner: inner,
-            const Self = @This();
-            pub fn get(self: *const Self) inner {
-                return self.inner;
-            }
-            pub fn set(val: inner) Self {
-                return Self{ .inner = val };
-            }
-        };
-    } else {
-        return struct {
-            inner: @FieldType(inner, "inner"),
-            const Self = @This();
-            pub fn get(self: *const Self) @FieldType(inner, "inner") {
-                return self.inner;
-            }
-            pub fn set(val: @FieldType(inner, "inner")) Self {
-                return Self{ .inner = val };
-            }
-        };
+
+fn NewPropFields(comptime old: type, comptime Property: Props) type {
+    var PropF = @typeInfo(old);
+    var fields: [PropF.@"struct".fields.len]std.builtin.Type.StructField = undefined;
+    for (PropF.@"struct".fields, 0..) |field, i| {
+        if (std.mem.eql(u8, @tagName(Property), field.name)) {
+            var newF = field;
+            newF.default_value_ptr = &true;
+            fields[i] = newF;
+        } else {
+            fields[i] = field;
+        }
     }
+    PropF.@"struct".fields = &fields;
+    PropF.@"struct".decls = &.{};
+    return @Type(PropF);
 }
-pub fn PrimaryKey(comptime inner: type) type {
+
+fn SetProp(comptime inner: type, comptime Prop: Props) type {
     const p = resolveProps(inner);
     if (!p.hasPropsSet()) {
         return struct {
             inner: inner,
+            props: NewPropFields(PropFields, Prop) = .{},
             const Self = @This();
             pub fn get(self: *const Self) inner {
                 return self.inner;
@@ -106,6 +101,7 @@ pub fn PrimaryKey(comptime inner: type) type {
     } else {
         return struct {
             inner: @FieldType(inner, "inner"),
+            props: NewPropFields(@FieldType(inner, "props"), Prop) = .{},
             const Self = @This();
             pub fn get(self: *const Self) @FieldType(inner, "inner") {
                 return self.inner;
@@ -117,30 +113,14 @@ pub fn PrimaryKey(comptime inner: type) type {
     }
 }
 
-//Sets Unique on Conflict Replace
+pub fn NotNull(comptime inner: type) type {
+    return SetProp(inner, .NotNull);
+}
+
+pub fn PrimaryKey(comptime inner: type) type {
+    return SetProp(inner, .PrimaryKey);
+}
+
 pub fn UniqueReplace(comptime inner: type) type {
-    const p = resolveProps(inner);
-    if (!p.hasPropsSet()) {
-        return struct {
-            inner: inner,
-            const Self = @This();
-            pub fn get(self: *const Self) inner {
-                return self.inner;
-            }
-            pub fn set(val: inner) Self {
-                return Self{ .inner = val };
-            }
-        };
-    } else {
-        return struct {
-            inner: @FieldType(inner, "inner"),
-            const Self = @This();
-            pub fn get(self: *const Self) @FieldType(inner, "inner") {
-                return self.inner;
-            }
-            pub fn set(val: @FieldType(inner, "inner")) Self {
-                return Self{ .inner = val };
-            }
-        };
-    }
+    return SetProp(inner, .UniqueReplace);
 }
