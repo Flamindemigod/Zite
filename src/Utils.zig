@@ -46,18 +46,34 @@ pub fn TableToCreateStatement(comptime table: type, comptime name: []const u8) [
                             if (props.getSetProps().len != 0) {
                                 Query = Query ++ f.name;
                                 switch (@typeInfo(@FieldType(f.type, "inner"))) {
-                                    inline .int, .@"enum" => Query = Query ++ " INTEGER ",
-                                    else => |t| @compileLog(t),
-                                }
+                                    .int => {Query = Query ++ " INTEGER ";
                                 const propArr = props.getSetProps();
                                 for (propArr, 0..) |prop, pi| {
                                     Query = Query ++ Constraints.Props.Values[@intFromEnum(prop)];
                                     if (pi < propArr.len - 1) Query = Query ++ " ";
                                 }
+                                if(!props.PrimaryKey) {if(f.defaultValue())|dv| Query = Query ++ " DEFAULT " ++ std.fmt.comptimePrint("{d}", .{dv.get()});}
+                                    },
+                                    .@"enum" =>{
+                                        Query = Query ++ " INTEGER ";
+                                const propArr = props.getSetProps();
+                                for (propArr, 0..) |prop, pi| {
+                                    Query = Query ++ Constraints.Props.Values[@intFromEnum(prop)];
+                                    if (pi < propArr.len - 1) Query = Query ++ " ";
+                                }
+                                if(!props.PrimaryKey) {if(f.defaultValue())|dv| Query = Query ++ " DEFAULT " ++ std.fmt.comptimePrint("{d}", .{@intFromEnum(dv.get())});}
+                                    },
+                                    else => |t| @compileLog(t),
+                                }
                             }
                         },
-                        inline .int, .@"enum" => {
+                        .int => {
                             Query = Query ++ f.name ++ " INTEGER";
+                            if(f.defaultValue())|dv| Query = Query ++ " DEFAULT " ++ std.fmt.comptimePrint("{d}", .{dv});
+                        },
+                        .@"enum" => {
+                            Query = Query ++ f.name ++ " INTEGER";
+                            if(f.defaultValue())|dv| Query = Query ++ " DEFAULT " ++ std.fmt.comptimePrint("{d}", .{@intFromEnum(dv)});
                         },
                         else => |t| @compileLog(t),
                     }

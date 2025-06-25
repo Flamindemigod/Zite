@@ -176,7 +176,7 @@ test "Register Table" {
 
     const test_struct = struct {
         id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
-        value: u16,
+        value: u32 = 69420,
     };
 
     const testing = std.testing;
@@ -184,7 +184,7 @@ test "Register Table" {
     defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
     defer db.close();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    try testing.expectEqualStrings(stmt, "CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER);");
+    try testing.expectEqualStrings("CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER DEFAULT 69420);", stmt);
     _ = try db.exec(void, testing.allocator, stmt);
 }
 
@@ -271,7 +271,7 @@ test "Zite Insert" {
             Bruh,
         };
         id: NotNull(UniqueReplace(PrimaryKey(u8))) = .set(0),
-        value: NotNull(v),
+        value: NotNull(v) =  .set(.Test),
     };
     const testing = std.testing;
     const db = try Zite.open(".TestInsert.db", &.{ .create, .readwrite });

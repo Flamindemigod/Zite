@@ -18,12 +18,10 @@ pub const Props = enum {
     PrimaryKey,
     UniqueReplace,
     NotNull,
-    Default,
     pub const Values: []const []const u8 = &.{
         "PRIMARY KEY",
         "UNIQUE ON CONFLICT REPLACE",
         "NOT NULL ON CONFLICT FAIL",
-        "DEFAULT",
     };
 };
 
@@ -31,7 +29,7 @@ pub const PropFields = packed struct {
     PrimaryKey: bool = false,
     UniqueReplace: bool = false,
     NotNull: bool = false,
-    Default: bool = false,
+    reserved: bool = false,
 
     pub fn hasPropsSet(comptime self: *const PropFields) bool {
         return (@as(u4, @bitCast(self.*)) & 1) != 0;
