@@ -105,10 +105,12 @@ inline fn ParseType(allocator: std.mem.Allocator, comptime field: type, value: [
             if (value == null) return null;
             return ParseType(allocator, o.child, value);
         },
-        .pointer => |p|{
-            if(p.child == u8 and p.size == .slice){
+        .pointer => |p| {
+            if (p.child == u8 and p.size == .slice) {
                 return allocator.dupe(u8, std.mem.span(value)) catch unreachable;
-            } else {@compileError("Unimplemented");}
+            } else {
+                @compileError("Unimplemented");
+            }
         },
         else => |s| {
             @compileLog(s, value);
@@ -123,21 +125,21 @@ pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayLi
             if (RetType == void) return 0;
             const structInfo: std.builtin.Type.Struct = switch (@typeInfo(RetType)) {
                 .@"struct" => |s| s,
-                else => @compileError("We dont support returning anything other than a struct\n")
+                else => @compileError("We dont support returning anything other than a struct\n"),
             };
             const t = builder.*.?.addOne() catch @panic("Out of Memory\n");
             const allocatorInner = builder.*.?.allocator;
             for (0..@intCast(count)) |i| {
-                inline for(structInfo.fields) |field|{
+                inline for (structInfo.fields) |field| {
                     switch (@typeInfo(field.type)) {
-                        .@"struct" => |s|{
+                        .@"struct" => |s| {
                             if (comptime Constraints.resolveProps(field.type).hasPropsSet()) {
                                 if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
-                                     @field(t, field.name) = .set(ParseType(allocatorInner, @FieldType(field.type, "inner"), data[i]));
+                                    @field(t, field.name) = .set(ParseType(allocatorInner, @FieldType(field.type, "inner"), data[i]));
                                 }
                             } else {
-                                inline for(s.fields)|sField|{
-                                if (std.mem.eql(u8, field.name ++ "_" ++ sField.name, std.mem.span(cols[i]))) {
+                                inline for (s.fields) |sField| {
+                                    if (std.mem.eql(u8, field.name ++ "_" ++ sField.name, std.mem.span(cols[i]))) {
                                         @field(@field(t, field.name), sField.name) = ParseType(allocatorInner, sField.type, data[i]);
                                     }
                                 }
@@ -183,20 +185,21 @@ fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, compti
             if (value != null) return try self.bindValue(stmt, idx, o.child, value.?);
             try unwrapError(self.db, sqlite.sqlite3_bind_null(stmt, idx.*));
         },
-        .@"struct" => |s|{
+        .@"struct" => |s| {
             idx.* -= 1;
-            inline for(s.fields)|field| {
+            inline for (s.fields) |field| {
                 try self.bindValue(stmt, idx, field.type, @field(value, field.name));
             }
         },
-        .pointer => |p|{
-            if(p.child == u8 and p.size == .slice){
-                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len),null));
-            } else {@compileError("Unimplemented");}
+        .pointer => |p| {
+            if (p.child == u8 and p.size == .slice) {
+                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len), null));
+            } else {
+                @compileError("Unimplemented");
+            }
         },
         else => |t| @compileLog(t),
     }
-
 }
 
 pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype) !void {
@@ -233,7 +236,7 @@ test "Register Table" {
     defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
     try testing.expectEqualStrings("CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER DEFAULT 69420);", stmt);
-    _ = try db.exec(void,  stmt);
+    _ = try db.exec(void, stmt);
 }
 
 test "Exec Callback" {
@@ -251,10 +254,10 @@ test "Exec Callback" {
     defer (std.fs.cwd().deleteFile(".TestExec.db") catch {});
     defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void,  stmt);
-    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
-    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (1, 2);");
-    var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+    _ = try db.exec(void, stmt);
+    _ = try db.exec(void, "INSERT INTO Main(id, value) VALUES (0, 1);");
+    _ = try db.exec(void, "INSERT INTO Main(id, value) VALUES (1, 2);");
+    var ret = try db.exec(test_struct, "SELECT * FROM Main;");
     defer ret.?.deinit();
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = 1 });
     try std.testing.expectEqualDeep(ret.?.items[1], test_struct{ .id = .set(1), .value = 2 });
@@ -275,9 +278,9 @@ test "Exec Insert Constraint Error" {
     defer (std.fs.cwd().deleteFile(".TestConstraintError.db") catch {});
     defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void,  stmt);
-    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
-    try std.testing.expectError(ZiteError.Constraint, db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);"));
+    _ = try db.exec(void, stmt);
+    _ = try db.exec(void, "INSERT INTO Main(id, value) VALUES (0, 1);");
+    try std.testing.expectError(ZiteError.Constraint, db.exec(void, "INSERT INTO Main(id, value) VALUES (0, 1);"));
 }
 
 test "Zite Enum" {
@@ -300,9 +303,9 @@ test "Zite Enum" {
     defer (std.fs.cwd().deleteFile(".TestEnum.db") catch {});
     defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void,  stmt);
-    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
-    var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+    _ = try db.exec(void, stmt);
+    _ = try db.exec(void, "INSERT INTO Main(id, value) VALUES (0, 1);");
+    var ret = try db.exec(test_struct, "SELECT * FROM Main;");
     defer ret.?.deinit();
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
 }
@@ -327,21 +330,21 @@ test "Zite Insert" {
     defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void,  stmt);
+        _ = try db.exec(void, stmt);
     }
     var t = test_struct{ .value = .set(.Bruh) };
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Bruh) });
     }
     {
         t.value = .set(.Hello);
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
     }
@@ -362,21 +365,21 @@ test "Zite Null" {
     defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void,  stmt);
+        _ = try db.exec(void, stmt);
     }
     var t = test_struct{};
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 69420 }, ret.?.items[0]);
     }
     {
         t.value = 42069;
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 42069 }, ret.?.items[0]);
     }
@@ -415,7 +418,6 @@ test "Zite Null" {
 //     };
 // };
 
-
 test "Zite MaoMao" {
     const NotNull = Constraints.NotNull;
     const UniqueReplace = Constraints.UniqueReplace;
@@ -432,25 +434,25 @@ test "Zite MaoMao" {
         expiresIn: u32 = 0,
         idMal: ?u32 = 1,
         coverImage: CoverImage = .{},
-//     bannerImage: ?Types.String,
-//     title: Types.Titles,
-//     description: ?Types.String,
-//     type: Types.Media.Type,
-//     format: Types.Media.Format,
-//     source: Types.Media.Source,
-//     season: ?Types.Media.Season,
-//     seasonYear: ?u32,
-//     startDate: Types.Date,
-//     endDate: Types.Date,
-//     status: Types.Media.Status,
-//     averageScore: ?u32,
-//
-//     duration: ?u32,
-//     episodes: ?u32,
-//     chapters: ?u32,
-//     volumes: ?u32,
-//     countryOfOrigin: Types.String,
-//     genres: []Types.String,
+        //     bannerImage: ?Types.String,
+        //     title: Types.Titles,
+        //     description: ?Types.String,
+        //     type: Types.Media.Type,
+        //     format: Types.Media.Format,
+        //     source: Types.Media.Source,
+        //     season: ?Types.Media.Season,
+        //     seasonYear: ?u32,
+        //     startDate: Types.Date,
+        //     endDate: Types.Date,
+        //     status: Types.Media.Status,
+        //     averageScore: ?u32,
+        //
+        //     duration: ?u32,
+        //     episodes: ?u32,
+        //     chapters: ?u32,
+        //     volumes: ?u32,
+        //     countryOfOrigin: Types.String,
+        //     genres: []Types.String,
     };
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -461,13 +463,13 @@ test "Zite MaoMao" {
     defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void,  stmt);
+        _ = try db.exec(void, stmt);
     }
     const t = test_struct{};
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(t, ret.?.items[0]);
     }
