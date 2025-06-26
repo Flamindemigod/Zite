@@ -163,30 +163,36 @@ pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayLi
 fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fieldType: type, value: fieldType) !void {
     const has_props = comptime Constraints.resolveProps(fieldType).getSetProps().len != 0;
     const field_type = if (has_props) @FieldType(fieldType, "inner") else fieldType;
-    defer idx.* += 1;
     switch (@typeInfo(field_type)) {
-        .int => try unwrapError(
-            self.db,
-            sqlite.sqlite3_bind_int(
-                stmt,
-                idx.*,
-                @intCast(if (has_props) value.inner else value),
-            ),
-        ),
-        .@"enum" => try unwrapError(
-            self.db,
-            sqlite.sqlite3_bind_int(
-                stmt,
-                idx.*,
-                @intFromEnum(if (has_props) value.inner else value),
-            ),
-        ),
+        .int => {
+            try unwrapError(
+                self.db,
+                sqlite.sqlite3_bind_int(
+                    stmt,
+                    idx.*,
+                    @intCast(if (has_props) value.inner else value),
+                ),
+            );
+            idx.* += 1;
+        },
+        .@"enum" => {
+            try unwrapError(
+                self.db,
+                sqlite.sqlite3_bind_int(
+                    stmt,
+                    idx.*,
+                    @intFromEnum(if (has_props) value.inner else value),
+                ),
+            );
+
+            idx.* += 1;
+        },
         .optional => |o| {
             if (value != null) return try self.bindValue(stmt, idx, o.child, value.?);
             try unwrapError(self.db, sqlite.sqlite3_bind_null(stmt, idx.*));
+            idx.* += 1;
         },
         .@"struct" => |s| {
-            idx.* -= 1;
             inline for (s.fields) |field| {
                 try self.bindValue(stmt, idx, field.type, @field(value, field.name));
             }
@@ -194,6 +200,7 @@ fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, compti
         .pointer => |p| {
             if (p.child == u8 and p.size == .slice) {
                 try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len), null));
+                idx.* += 1;
             } else {
                 @compileError("Unimplemented");
             }
@@ -210,6 +217,7 @@ pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype)
         try self.bindValue(ppStmt, &i, field.type, @field(value, field.name));
     }
     try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
+    try unwrapError(self.db, sqlite.sqlite3_finalize(ppStmt));
 }
 
 test "Open DB" {
@@ -434,7 +442,7 @@ test "Zite MaoMao" {
         expiresIn: u32 = 0,
         idMal: ?u32 = 1,
         coverImage: CoverImage = .{},
-        //     bannerImage: ?Types.String,
+        bannerImage: ?[]const u8 = null,
         //     title: Types.Titles,
         //     description: ?Types.String,
         //     type: Types.Media.Type,
