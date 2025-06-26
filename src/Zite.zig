@@ -91,17 +91,22 @@ pub fn close(self: *const Zite) void {
     _ = sqlite.sqlite3_close_v2(self.db);
 }
 
-inline fn ParseType(comptime field: type, value: [*c]u8) field {
+inline fn ParseType(allocator: std.mem.Allocator, comptime field: type, value: [*c]u8) field {
     switch (@typeInfo(field)) {
         .int => {
             return std.fmt.parseInt(field, std.mem.span(value), 0) catch unreachable;
         },
         .@"enum" => |e| {
-            return @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(value), '_') catch unreachable);
+            return @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(value), 0) catch unreachable);
         },
         .optional => |o| {
-            if (std.mem.eql(u8, std.mem.span(value), "null")) return null;
-            return ParseType(o.child, value);
+            if (value == null) return null;
+            return ParseType(allocator, o.child, value);
+        },
+        .pointer => |p|{
+            if(p.child == u8 and p.size == .slice){
+                return allocator.dupe(u8, std.mem.span(value)) catch unreachable;
+            } else {@compileError("Unimplemented");}
         },
         else => |s| {
             @compileLog(s, value);
@@ -114,16 +119,31 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
         fn cb(ctx: ?*anyopaque, count: c_int, data: [*c][*c]u8, cols: [*c][*c]u8) callconv(.C) c_int {
             const builder: *?std.ArrayList(RetType) = @ptrCast(@alignCast(ctx));
             if (RetType == void) return 0;
-            if (@typeInfo(RetType) != .@"struct") @compileError("We dont support returning anything other than a struct\n");
+            const structInfo: std.builtin.Type.Struct = switch (@typeInfo(RetType)) {
+                .@"struct" => |s| s,
+                else => @compileError("We dont support returning anything other than a struct\n")
+            };
             const t = builder.*.?.addOne() catch @panic("Out of Memory\n");
+            const allocatorInner = builder.*.?.allocator;
             for (0..@intCast(count)) |i| {
-                inline for (std.meta.fields(RetType)) |field| {
-                    if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
-                        if (comptime Constraints.resolveProps(field.type).getSetProps().len != 0) {
-                            @field(t.*, field.name) = .set(ParseType(@FieldType(field.type, "inner"), data[i]));
-                        } else {
-                            @field(t.*, field.name) = ParseType(field.type, data[i]);
-                        }
+                inline for(structInfo.fields) |field|{
+                    switch (@typeInfo(field.type)) {
+                        .@"struct" => |s|{
+                            if (comptime Constraints.resolveProps(field.type).hasPropsSet()) {
+                                if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
+                                     @field(t, field.name) = .set(ParseType(allocatorInner, @FieldType(field.type, "inner"), data[i]));
+                                }
+                            } else {
+                                inline for(s.fields)|sField|{
+                                if (std.mem.eql(u8, field.name ++ "_" ++ sField.name, std.mem.span(cols[i]))) {
+                                        @field(@field(t, field.name), sField.name) = ParseType(allocatorInner, sField.type, data[i]);
+                                    }
+                                }
+                            }
+                        },
+                        else => if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
+                            @field(t, field.name) = ParseType(allocatorInner, field.type, data[i]);
+                        },
                     }
                 }
             }
@@ -136,15 +156,16 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
     return builder;
 }
 
-fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: c_int, comptime fieldType: type, value: fieldType) !void {
+fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fieldType: type, value: fieldType) !void {
     const has_props = comptime Constraints.resolveProps(fieldType).getSetProps().len != 0;
     const field_type = if (has_props) @FieldType(fieldType, "inner") else fieldType;
+    defer idx.* += 1;
     switch (@typeInfo(field_type)) {
         .int => try unwrapError(
             self.db,
             sqlite.sqlite3_bind_int(
                 stmt,
-                idx,
+                idx.*,
                 @intCast(if (has_props) value.inner else value),
             ),
         ),
@@ -152,23 +173,36 @@ fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: c_int, comptim
             self.db,
             sqlite.sqlite3_bind_int(
                 stmt,
-                idx,
+                idx.*,
                 @intFromEnum(if (has_props) value.inner else value),
             ),
         ),
         .optional => |o| {
-            if (value != null) return self.bindValue(stmt, idx, o.child, value.?);
-            return try unwrapError(self.db, sqlite.sqlite3_bind_null(stmt, idx));
+            if (value != null) return try self.bindValue(stmt, idx, o.child, value.?);
+            try unwrapError(self.db, sqlite.sqlite3_bind_null(stmt, idx.*));
+        },
+        .@"struct" => |s|{
+            idx.* -= 1;
+            inline for(s.fields)|field| {
+                try self.bindValue(stmt, idx, field.type, @field(value, field.name));
+            }
+        },
+        .pointer => |p|{
+            if(p.child == u8 and p.size == .slice){
+                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len),null));
+            } else {@compileError("Unimplemented");}
         },
         else => |t| @compileLog(t),
     }
+
 }
 
 pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype) !void {
     var ppStmt: ?*sqlite.sqlite3_stmt = null;
     try unwrapError(self.db, sqlite.sqlite3_prepare_v2(self.db, stmt.ptr, stmt.len, &ppStmt, null));
-    inline for (std.meta.fields(@TypeOf(value)), 1..) |field, i| {
-        try self.bindValue(ppStmt, i, field.type, @field(value, field.name));
+    var i: c_int = 1;
+    inline for (std.meta.fields(@TypeOf(value))) |field| {
+        try self.bindValue(ppStmt, &i, field.type, @field(value, field.name));
     }
     try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
 }
@@ -343,5 +377,97 @@ test "Zite Null" {
         var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 42069 }, ret.?.items[0]);
+    }
+}
+
+// pub const Entry = struct {
+//     id: Types.Int,
+//     //Time in Seconds;
+//     expiresIn: Types.Int,
+//     idMal: ?Types.Int,
+//     coverImage: Types.CoverImage,
+//     bannerImage: ?Types.String,
+//     title: Types.Titles,
+//     description: ?Types.String,
+//     type: Types.Media.Type,
+//     format: Types.Media.Format,
+//     source: Types.Media.Source,
+//     season: ?Types.Media.Season,
+//     seasonYear: ?Types.Int,
+//     startDate: Types.Date,
+//     endDate: Types.Date,
+//     status: Types.Media.Status,
+//     averageScore: ?Types.Int,
+//
+//     duration: ?Types.Int,
+//     episodes: ?Types.Int,
+//     chapters: ?Types.Int,
+//     volumes: ?Types.Int,
+//     countryOfOrigin: Types.String,
+//     genres: []Types.String,
+//     //TODO: Move Tags to a seperate table
+//     //tags: []Types.Media.Tag,
+//
+//     pub const field_tags = .{
+//         .id = Types.FieldType{ .PRIMARY_KEY = true },
+//     };
+// };
+
+
+test "Zite MaoMao" {
+    const NotNull = Constraints.NotNull;
+    const UniqueReplace = Constraints.UniqueReplace;
+    const PrimaryKey = Constraints.PrimaryKey;
+    _ = UniqueReplace;
+    const test_struct = struct {
+        const CoverImage = struct {
+            large: []const u8 = "Hello there",
+            medium: []const u8 = "Bruh",
+            color: ?[]const u8 = null,
+        };
+        id: NotNull(PrimaryKey(u32)) = .set(1),
+        //Time in Seconds;
+        expiresIn: u32 = 0,
+        idMal: ?u32 = 1,
+        coverImage: CoverImage = .{},
+//     bannerImage: ?Types.String,
+//     title: Types.Titles,
+//     description: ?Types.String,
+//     type: Types.Media.Type,
+//     format: Types.Media.Format,
+//     source: Types.Media.Source,
+//     season: ?Types.Media.Season,
+//     seasonYear: ?u32,
+//     startDate: Types.Date,
+//     endDate: Types.Date,
+//     status: Types.Media.Status,
+//     averageScore: ?u32,
+//
+//     duration: ?u32,
+//     episodes: ?u32,
+//     chapters: ?u32,
+//     volumes: ?u32,
+//     countryOfOrigin: Types.String,
+//     genres: []Types.String,
+    };
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
+
+    const db = try Zite.open(".TestMaoMao.db", &.{ .create, .readwrite });
+    defer (std.fs.cwd().deleteFile(".TestMaoMao.db") catch {});
+    defer db.close();
+    {
+        const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+        _ = try db.exec(void, allocator, stmt);
+    }
+    const t = test_struct{};
+    const stmt = comptime Utils.InsertStatement(test_struct, "Main");
+    {
+        try db.bindAndExec(stmt, t);
+        var ret = try db.exec(test_struct, allocator, "SELECT * FROM Main;");
+        defer ret.?.deinit();
+        try std.testing.expectEqualDeep(t, ret.?.items[0]);
     }
 }

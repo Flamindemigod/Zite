@@ -32,7 +32,7 @@ pub const PropFields = packed struct {
     reserved: bool = false,
 
     pub fn hasPropsSet(comptime self: *const PropFields) bool {
-        return (@as(u4, @bitCast(self.*)) & 1) != 0;
+        return (@as(u4, @bitCast(self.*)) & 0b1111) != 0;
     }
 
     pub fn getSetProps(comptime self: *const PropFields) []Props {
@@ -58,6 +58,7 @@ pub inline fn resolveProps(comptime t: type) PropFields {
         },
         .@"enum" => {},
         .optional => |o| return resolveProps(o.child),
+        .pointer => {},
         else => |e| @compileLog(e),
     }
     return prop_buffer;
