@@ -7,6 +7,7 @@ const Zite = @This();
 pub const Constraints = @import("Constraints.zig");
 pub const Utils = @import("Utils.zig");
 db: *sqlite.sqlite3,
+allocator: std.heap.ArenaAllocator,
 
 //Only using the Valid Flags for Open.
 //Verifed by looking at implementaions in sqlite3.c:185839
@@ -75,7 +76,7 @@ inline fn unwrapError(conn: ?*sqlite.sqlite3, val: c_int) ZiteError!void {
     }
 }
 
-pub fn open(path: []const u8, flags: []const OpenFlags) ZiteError!Zite {
+pub fn init(allocator: std.mem.Allocator, path: []const u8, flags: []const OpenFlags) ZiteError!Zite {
     var db: ?*sqlite.sqlite3 = null;
     var flagVal: c_int = 0;
     for (flags) |f| {
@@ -83,12 +84,13 @@ pub fn open(path: []const u8, flags: []const OpenFlags) ZiteError!Zite {
     }
     const rc = sqlite.sqlite3_open_v2(path.ptr, @ptrCast(&db), flagVal, null);
     try unwrapError(db, rc);
-    return .{ .db = db.? };
+    return .{ .db = db.?, .allocator = std.heap.ArenaAllocator.init(allocator) };
 }
 
-pub fn close(self: *const Zite) void {
+pub fn deinit(self: *const Zite) void {
     //We ignore the RetCode because we are closing regardless.
     _ = sqlite.sqlite3_close_v2(self.db);
+    self.allocator.deinit();
 }
 
 inline fn ParseType(allocator: std.mem.Allocator, comptime field: type, value: [*c]u8) field {
@@ -114,7 +116,7 @@ inline fn ParseType(allocator: std.mem.Allocator, comptime field: type, value: [
     }
 }
 
-pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Allocator, stmt: []const u8) !?std.ArrayList(RetType) {
+pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayList(RetType) {
     const exec_callback = struct {
         fn cb(ctx: ?*anyopaque, count: c_int, data: [*c][*c]u8, cols: [*c][*c]u8) callconv(.C) c_int {
             const builder: *?std.ArrayList(RetType) = @ptrCast(@alignCast(ctx));
@@ -151,7 +153,7 @@ pub fn exec(self: *const Zite, comptime RetType: type, allocator: std.mem.Alloca
         }
     }.cb;
 
-    var builder: ?std.ArrayList(RetType) = if (RetType != void) std.ArrayList(RetType).init(allocator) else null;
+    var builder: ?std.ArrayList(RetType) = if (RetType != void) std.ArrayList(RetType).init(self.allocator.allocator()) else null;
     try unwrapError(self.db, sqlite.sqlite3_exec(self.db, stmt.ptr, exec_callback, @ptrCast(&builder), null));
     return builder;
 }
@@ -209,9 +211,9 @@ pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype)
 
 test "Open DB" {
     const testing = std.testing;
-    const db = try Zite.open(".TestOpen.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestOpen.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestOpen.db") catch {});
-    defer db.close();
+    defer db.deinit();
     try testing.expect(true);
 }
 
@@ -226,12 +228,12 @@ test "Register Table" {
     };
 
     const testing = std.testing;
-    const db = try Zite.open(".TestRegister.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestRegister.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestRegister.db") catch {});
-    defer db.close();
+    defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
     try testing.expectEqualStrings("CREATE TABLE IF NOT EXISTS Main(id INTEGER PRIMARY KEY UNIQUE ON CONFLICT REPLACE NOT NULL ON CONFLICT FAIL, value INTEGER DEFAULT 69420);", stmt);
-    _ = try db.exec(void, testing.allocator, stmt);
+    _ = try db.exec(void,  stmt);
 }
 
 test "Exec Callback" {
@@ -245,14 +247,14 @@ test "Exec Callback" {
     };
 
     const testing = std.testing;
-    const db = try Zite.open(".TestExec.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestExec.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestExec.db") catch {});
-    defer db.close();
+    defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void, testing.allocator, stmt);
-    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
-    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (1, 2);");
-    var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+    _ = try db.exec(void,  stmt);
+    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
+    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (1, 2);");
+    var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
     defer ret.?.deinit();
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = 1 });
     try std.testing.expectEqualDeep(ret.?.items[1], test_struct{ .id = .set(1), .value = 2 });
@@ -269,13 +271,13 @@ test "Exec Insert Constraint Error" {
     };
 
     const testing = std.testing;
-    const db = try Zite.open(".TestConstraintError.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestConstraintError.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestConstraintError.db") catch {});
-    defer db.close();
+    defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void, testing.allocator, stmt);
-    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
-    try std.testing.expectError(ZiteError.Constraint, db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);"));
+    _ = try db.exec(void,  stmt);
+    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
+    try std.testing.expectError(ZiteError.Constraint, db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);"));
 }
 
 test "Zite Enum" {
@@ -294,13 +296,13 @@ test "Zite Enum" {
     };
 
     const testing = std.testing;
-    const db = try Zite.open(".TestEnum.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestEnum.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestEnum.db") catch {});
-    defer db.close();
+    defer db.deinit();
     const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-    _ = try db.exec(void, testing.allocator, stmt);
-    _ = try db.exec(void, testing.allocator, "INSERT INTO Main(id, value) VALUES (0, 1);");
-    var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+    _ = try db.exec(void,  stmt);
+    _ = try db.exec(void,  "INSERT INTO Main(id, value) VALUES (0, 1);");
+    var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
     defer ret.?.deinit();
     try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
 }
@@ -320,26 +322,26 @@ test "Zite Insert" {
         value: NotNull(v) = .set(.Test),
     };
     const testing = std.testing;
-    const db = try Zite.open(".TestInsert.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestInsert.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestInsert.db") catch {});
-    defer db.close();
+    defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void, testing.allocator, stmt);
+        _ = try db.exec(void,  stmt);
     }
     var t = test_struct{ .value = .set(.Bruh) };
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Bruh) });
     }
     {
         t.value = .set(.Hello);
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = .set(.Hello) });
     }
@@ -355,26 +357,26 @@ test "Zite Null" {
         value: ?u32 = 69420,
     };
     const testing = std.testing;
-    const db = try Zite.open(".TestNull.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestNull.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestNull.db") catch {});
-    defer db.close();
+    defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void, testing.allocator, stmt);
+        _ = try db.exec(void,  stmt);
     }
     var t = test_struct{};
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     try testing.expectEqualStrings("INSERT INTO Main(id, value) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value=excluded.value;", stmt);
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 69420 }, ret.?.items[0]);
     }
     {
         t.value = 42069;
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct, testing.allocator, "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 42069 }, ret.?.items[0]);
     }
@@ -452,21 +454,20 @@ test "Zite MaoMao" {
     };
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    const allocator = arena.allocator();
     defer arena.deinit();
 
-    const db = try Zite.open(".TestMaoMao.db", &.{ .create, .readwrite });
+    var db = try Zite.init(testing.allocator, ".TestMaoMao.db", &.{ .create, .readwrite });
     defer (std.fs.cwd().deleteFile(".TestMaoMao.db") catch {});
-    defer db.close();
+    defer db.deinit();
     {
         const stmt = Utils.TableToCreateStatement(test_struct, "Main");
-        _ = try db.exec(void, allocator, stmt);
+        _ = try db.exec(void,  stmt);
     }
     const t = test_struct{};
     const stmt = comptime Utils.InsertStatement(test_struct, "Main");
     {
         try db.bindAndExec(stmt, t);
-        var ret = try db.exec(test_struct, allocator, "SELECT * FROM Main;");
+        var ret = try db.exec(test_struct,  "SELECT * FROM Main;");
         defer ret.?.deinit();
         try std.testing.expectEqualDeep(t, ret.?.items[0]);
     }
