@@ -15,7 +15,8 @@ fn genInsertConflicts(comptime fieldType: type, name: []const u8) []const u8 {
                 }
             }
         },
-        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
+        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertConflicts(o.child, name) else std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
+        inline  .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
         else => |t| @compileLog(t),
     }
     Query = Query ++ "";
@@ -36,7 +37,8 @@ fn genInsertValues(comptime fieldType: type) []const u8 {
                 }
             }
         },
-        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}?", .{Query}),
+        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertValues(o.child) else std.fmt.comptimePrint("{s}?", .{ Query }),
+        inline .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}?", .{Query}),
         else => |t| @compileLog(t),
     }
     Query = Query ++ "";
@@ -56,30 +58,11 @@ fn genInsertValuesForType(comptime fieldType: type, comptime name: []const u8, p
                 }
             }
         },
-        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
+        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertValuesForType(o.child, name, props) else std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
+        inline .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
         else => |t| @compileLog(t, props, name),
     }
     Query = Query ++ "";
-    // switch (@typeInfo(fieldType)) {
-    //         .@"struct" => |s| {
-    //             for (s.fields, 0..) |f, i| {
-    //                 Query = Query ++ f.name;
-    //                 if (i < s.fields.len - 1) Query = Query ++ ", ";
-    //             }
-    //             Query = Query ++ " VALUES (";
-    //             for (0..s.fields.len) |i| {
-    //                 Query = Query ++ "?";
-    //                 if (i < s.fields.len - 1) Query = Query ++ ", ";
-    //             }
-    //             Query = Query ++ ") ON CONFLICT(" ++ primary ++ ") DO UPDATE SET ";
-    //             for (s.fields, 0..) |f, i| {
-    //                 if (std.mem.eql(u8, f.name, primary)) continue;
-    //                 Query = Query ++ f.name ++ "=excluded." ++ f.name;
-    //                 if (i < s.fields.len - 1) Query = Query ++ ", ";
-    //             }
-    //             Query = Query ++ ";";
-    //         },
-    //     }
     return Query;
 }
 

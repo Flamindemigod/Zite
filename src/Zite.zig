@@ -93,72 +93,104 @@ pub fn deinit(self: *const Zite) void {
     self.allocator.deinit();
 }
 
-inline fn ParseType(allocator: std.mem.Allocator, comptime field: type, value: [*c]u8) field {
-    switch (@typeInfo(field)) {
+fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *RetType, comptime name: []const u8, hm: *std.StringHashMap(usize), data: [*c][*c]u8 ) void {
+    switch(@typeInfo(RetType)){
         .int => {
-            return std.fmt.parseInt(field, std.mem.span(value), 0) catch unreachable;
+                if(hm.get(name))|idx| {
+                    value.* =  std.fmt.parseInt(RetType, std.mem.span(data[idx]), 0) catch unreachable;
+                    return;
+                }
+            unreachable;
         },
-        .@"enum" => |e| {
-            return @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(value), 0) catch unreachable);
+        .@"enum" =>|e| {
+                if(hm.get(name))|idx| {
+                    value.* =  @as(RetType, @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(data[idx]), 0) catch unreachable));
+                    return;
+                }
+            unreachable;
         },
         .optional => |o| {
-            if (value == null) return null;
-            return ParseType(allocator, o.child, value);
+            if(@typeInfo(o.child) == .@"struct"){
+            var isAllNull = true;
+                inline for(std.meta.fields(o.child))|field|{
+                    if(hm.get(name ++ "_" ++ field.name))|idx| {
+                        if(data[idx] != null) {isAllNull = false; break;}
+                    }
+                }
+                if(isAllNull) {value.* = null;} else{
+                    rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
+                }
+                return;
+            }
+            if(hm.get(name))|idx| {
+                    if(data[idx] == null) {value.* = null;} else rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
+                    return;
+                }
+            std.debug.print("name:{s}\n", .{name});
+            unreachable;
         },
         .pointer => |p| {
-            if (p.child == u8 and p.size == .slice) {
-                return allocator.dupe(u8, std.mem.span(value)) catch unreachable;
+                if(hm.get(name))|idx| {
+                    if (p.child == u8 and p.size == .slice) {
+                        value.* = allocator.dupe(u8, std.mem.span(data[idx])) catch unreachable;
+                            } else {
+                        @compileError("Unimplemented");
+                        }
+                    return;
+                }
+            std.debug.print("name: {s}\n", .{name});
+            unreachable;
+        },
+        .@"struct" =>|s| {
+            inline for (s.fields)|field|{
+            if(comptime Constraints.resolveProps(field.type).hasPropsSet()){
+                var temp: @FieldType(field.type, "inner") = undefined;
+                rebuildType(@FieldType(field.type, "inner"), allocator, &temp, field.name, hm, data );
+                @field(value, field.name) = .set(temp);
             } else {
-                @compileError("Unimplemented");
-            }
+                if(name.len == 0) {
+                    rebuildType(field.type, allocator, &@field(value, field.name), field.name, hm, data );
+                } else {
+                    rebuildType(field.type, allocator, &@field(value, field.name), name ++ "_" ++ field.name, hm, data);
+                }
+             }
+        }
         },
-        else => |s| {
-            @compileLog(s, value);
-        },
+        else => |s| @compileLog(s),
     }
 }
 
 pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayList(RetType) {
+    const Holder = struct {
+        al: std.ArrayList(RetType),
+        hm: std.StringHashMap(usize),
+    };
     const exec_callback = struct {
         fn cb(ctx: ?*anyopaque, count: c_int, data: [*c][*c]u8, cols: [*c][*c]u8) callconv(.C) c_int {
-            const builder: *?std.ArrayList(RetType) = @ptrCast(@alignCast(ctx));
+            const builder: *?Holder = @ptrCast(@alignCast(ctx));
             if (RetType == void) return 0;
             const structInfo: std.builtin.Type.Struct = switch (@typeInfo(RetType)) {
                 .@"struct" => |s| s,
                 else => @compileError("We dont support returning anything other than a struct\n"),
             };
-            const t = builder.*.?.addOne() catch @panic("Out of Memory\n");
-            const allocatorInner = builder.*.?.allocator;
-            for (0..@intCast(count)) |i| {
-                //TODO: Pull out the structs into the ParseType function. so we can nest struct properly and optionals can work again
-                inline for (structInfo.fields) |field| {
-                    switch (@typeInfo(field.type)) {
-                        .@"struct" => |s| {
-                            if (comptime Constraints.resolveProps(field.type).hasPropsSet()) {
-                                if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
-                                    @field(t, field.name) = .set(ParseType(allocatorInner, @FieldType(field.type, "inner"), data[i]));
-                                }
-                            } else {
-                                inline for (s.fields) |sField| {
-                                    if (std.mem.eql(u8, field.name ++ "_" ++ sField.name, std.mem.span(cols[i]))) {
-                                        @field(@field(t, field.name), sField.name) = ParseType(allocatorInner, sField.type, data[i]);
-                                    }
-                                }
-                            }
-                        },
-                        else => if (std.mem.eql(u8, field.name, std.mem.span(cols[i]))) {
-                            @field(t, field.name) = ParseType(allocatorInner, field.type, data[i]);
-                        },
-                    }
-                }
+            const t = builder.*.?.al.addOne() catch @panic("Out of Memory\n");
+            const hm = &builder.*.?.hm;
+            for(0..@intCast(count))|idx|{
+                hm.put(std.mem.span(cols[idx]), idx) catch @panic("Out of Memory\n");
             }
+            const allocatorInner = hm.allocator;
+            _ = structInfo;
+            rebuildType(RetType, allocatorInner,t, "" ,hm, data);
             return 0;
         }
     }.cb;
-
-    var builder: ?std.ArrayList(RetType) = if (RetType != void) std.ArrayList(RetType).init(self.allocator.allocator()) else null;
+    var builder: ?Holder = if (RetType != void) .{
+        .al = .init(self.allocator.allocator()),
+        .hm = .init(self.allocator.allocator()),
+    } else null;
+    defer if (RetType != void) builder.?.hm.deinit();
     try unwrapError(self.db, sqlite.sqlite3_exec(self.db, stmt.ptr, exec_callback, @ptrCast(&builder), null));
-    return builder;
+    return if (builder) |b| b.al else null;
 }
 
 fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fieldType: type, value: fieldType) !void {
@@ -268,8 +300,8 @@ test "Exec Callback" {
     _ = try db.exec(void, "INSERT INTO Main(id, value) VALUES (1, 2);");
     var ret = try db.exec(test_struct, "SELECT * FROM Main;");
     defer ret.?.deinit();
-    try std.testing.expectEqualDeep(ret.?.items[0], test_struct{ .id = .set(0), .value = 1 });
-    try std.testing.expectEqualDeep(ret.?.items[1], test_struct{ .id = .set(1), .value = 2 });
+    try std.testing.expectEqualDeep(test_struct{ .id = .set(0), .value = 1 }, ret.?.items[0]);
+    try std.testing.expectEqualDeep(test_struct{ .id = .set(1), .value = 2 }, ret.?.items[1]);
 }
 
 test "Exec Insert Constraint Error" {
@@ -411,8 +443,7 @@ test "Zite MaoMao" {
             userPreferred: ?[]const u8 = null,
         };
         const Type = enum {
-            ANIME,
-            MANGA,
+            ANIME,            MANGA,
         };
         const Format = enum {
             TV,
@@ -468,7 +499,7 @@ test "Zite MaoMao" {
         season: Season = .SPRING,
         seasonYear: ?u32 = 2000,
         startDate: Date = .{ .year = 2000, .month = 2, .day = 1 },
-        //endDate: ?Date = null,
+        endDate: ?Date = .{.year = 2001, .month = 1, .day = 3 },
         //     status: Types.Media.Status,
         //     averageScore: ?u32,
         //
