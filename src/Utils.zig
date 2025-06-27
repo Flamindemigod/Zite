@@ -15,7 +15,7 @@ fn genInsertConflicts(comptime fieldType: type, name: []const u8) []const u8 {
                 }
             }
         },
-        inline .optional, .int, .pointer => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
+        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
         else => |t| @compileLog(t),
     }
     Query = Query ++ "";
@@ -36,7 +36,7 @@ fn genInsertValues(comptime fieldType: type) []const u8 {
                 }
             }
         },
-        inline .optional, .int, .pointer => Query = std.fmt.comptimePrint("{s}?", .{Query}),
+        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}?", .{Query}),
         else => |t| @compileLog(t),
     }
     Query = Query ++ "";
@@ -56,7 +56,7 @@ fn genInsertValuesForType(comptime fieldType: type, comptime name: []const u8, p
                 }
             }
         },
-        inline .optional, .int, .pointer => Query = std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
+        inline .optional, .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
         else => |t| @compileLog(t, props, name),
     }
     Query = Query ++ "";

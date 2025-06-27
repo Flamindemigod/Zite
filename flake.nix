@@ -27,9 +27,9 @@
           function build {
               if [ -z "$1" ]
               then
-                zig build -Doptimize=$OPT;
+                zig build -Doptimize=$OPT --summary all;
               else
-                zig build -Doptimize=$OPT "$1";
+                zig build -Doptimize=$OPT --summary all "$1";
               fi
           }
           function check { zig build -Doptimize=$OPT --watch check;}

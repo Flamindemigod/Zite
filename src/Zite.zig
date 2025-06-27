@@ -130,6 +130,7 @@ pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayLi
             const t = builder.*.?.addOne() catch @panic("Out of Memory\n");
             const allocatorInner = builder.*.?.allocator;
             for (0..@intCast(count)) |i| {
+                //TODO: Pull out the structs into the ParseType function. so we can nest struct properly and optionals can work again
                 inline for (structInfo.fields) |field| {
                     switch (@typeInfo(field.type)) {
                         .@"struct" => |s| {
@@ -393,39 +394,6 @@ test "Zite Null" {
     }
 }
 
-// pub const Entry = struct {
-//     id: Types.Int,
-//     //Time in Seconds;
-//     expiresIn: Types.Int,
-//     idMal: ?Types.Int,
-//     coverImage: Types.CoverImage,
-//     bannerImage: ?Types.String,
-//     title: Types.Titles,
-//     description: ?Types.String,
-//     type: Types.Media.Type,
-//     format: Types.Media.Format,
-//     source: Types.Media.Source,
-//     season: ?Types.Media.Season,
-//     seasonYear: ?Types.Int,
-//     startDate: Types.Date,
-//     endDate: Types.Date,
-//     status: Types.Media.Status,
-//     averageScore: ?Types.Int,
-//
-//     duration: ?Types.Int,
-//     episodes: ?Types.Int,
-//     chapters: ?Types.Int,
-//     volumes: ?Types.Int,
-//     countryOfOrigin: Types.String,
-//     genres: []Types.String,
-//     //TODO: Move Tags to a seperate table
-//     //tags: []Types.Media.Tag,
-//
-//     pub const field_tags = .{
-//         .id = Types.FieldType{ .PRIMARY_KEY = true },
-//     };
-// };
-
 test "Zite MaoMao" {
     const NotNull = Constraints.NotNull;
     const UniqueReplace = Constraints.UniqueReplace;
@@ -437,21 +405,70 @@ test "Zite MaoMao" {
             medium: []const u8 = "Bruh",
             color: ?[]const u8 = null,
         };
+        const Titles = struct {
+            english: ?[]const u8 = "Hello there",
+            native: ?[]const u8 = "Bruh",
+            userPreferred: ?[]const u8 = null,
+        };
+        const Type = enum {
+            ANIME,
+            MANGA,
+        };
+        const Format = enum {
+            TV,
+            TV_SHORT,
+            MOVIE,
+            SPECIAL,
+            OVA,
+            ONA,
+            MUSIC,
+            MANGA,
+            NOVEL,
+            ONE_SHOT,
+        };
+        const Source = enum {
+            ORIGINAL,
+            MANGA,
+            LIGHT_NOVEL,
+            VISUAL_NOVEL,
+            VIDEO_GAME,
+            OTHER,
+            NOVEL,
+            DOUJINSHI,
+            ANIME,
+            WEB_NOVEL,
+            LIVE_ACTION,
+            GAME,
+            COMIC,
+            MULTIMEDIA_PROJECT,
+            PICTURE_BOOK,
+        };
+        const Season = enum {
+            WINTER,
+            SPRING,
+            SUMMER,
+            FALL,
+        };
+        const Date = struct {
+            year: u32,
+            month: u4,
+            day: u5,
+        };
         id: NotNull(PrimaryKey(u32)) = .set(1),
         //Time in Seconds;
         expiresIn: u32 = 0,
         idMal: ?u32 = 1,
         coverImage: CoverImage = .{},
         bannerImage: ?[]const u8 = null,
-        //     title: Types.Titles,
-        //     description: ?Types.String,
-        //     type: Types.Media.Type,
-        //     format: Types.Media.Format,
-        //     source: Types.Media.Source,
-        //     season: ?Types.Media.Season,
-        //     seasonYear: ?u32,
-        //     startDate: Types.Date,
-        //     endDate: Types.Date,
+        title: Titles = .{},
+        description: ?[]const u8 = null,
+        type: Type = .ANIME,
+        format: Format = Format.TV,
+        source: Source = .ORIGINAL,
+        season: Season = .SPRING,
+        seasonYear: ?u32 = 2000,
+        startDate: Date = .{ .year = 2000, .month = 2, .day = 1 },
+        //endDate: ?Date = null,
         //     status: Types.Media.Status,
         //     averageScore: ?u32,
         //
