@@ -93,68 +93,75 @@ pub fn deinit(self: *const Zite) void {
     self.allocator.deinit();
 }
 
-fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *RetType, comptime name: []const u8, hm: *std.StringHashMap(usize), data: [*c][*c]u8 ) void {
-    switch(@typeInfo(RetType)){
+fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *RetType, comptime name: []const u8, hm: *std.StringHashMap(usize), data: [*c][*c]u8) void {
+    switch (@typeInfo(RetType)) {
         .int => {
-                if(hm.get(name))|idx| {
-                    value.* =  std.fmt.parseInt(RetType, std.mem.span(data[idx]), 0) catch unreachable;
-                    return;
-                }
+            if (hm.get(name)) |idx| {
+                value.* = std.fmt.parseInt(RetType, std.mem.span(data[idx]), 0) catch unreachable;
+                return;
+            }
             unreachable;
         },
-        .@"enum" =>|e| {
-                if(hm.get(name))|idx| {
-                    value.* =  @as(RetType, @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(data[idx]), 0) catch unreachable));
-                    return;
-                }
+        .@"enum" => |e| {
+            if (hm.get(name)) |idx| {
+                value.* = @as(RetType, @enumFromInt(std.fmt.parseInt(e.tag_type, std.mem.span(data[idx]), 0) catch unreachable));
+                return;
+            }
             unreachable;
         },
         .optional => |o| {
-            if(@typeInfo(o.child) == .@"struct"){
-            var isAllNull = true;
-                inline for(std.meta.fields(o.child))|field|{
-                    if(hm.get(name ++ "_" ++ field.name))|idx| {
-                        if(data[idx] != null) {isAllNull = false; break;}
+            if (@typeInfo(o.child) == .@"struct") {
+                var isAllNull = true;
+                inline for (std.meta.fields(o.child)) |field| {
+                    if (hm.get(name ++ "_" ++ field.name)) |idx| {
+                        if (data[idx] != null) {
+                            isAllNull = false;
+                            break;
+                        }
                     }
                 }
-                if(isAllNull) {value.* = null;} else{
+                if (isAllNull) {
+                    value.* = null;
+                } else {
                     rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
                 }
                 return;
             }
-            if(hm.get(name))|idx| {
-                    if(data[idx] == null) {value.* = null;} else rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
-                    return;
-                }
+            if (hm.get(name)) |idx| {
+                if (data[idx] == null) {
+                    value.* = null;
+                } else rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
+                return;
+            }
             std.debug.print("name:{s}\n", .{name});
             unreachable;
         },
         .pointer => |p| {
-                if(hm.get(name))|idx| {
-                    if (p.child == u8 and p.size == .slice) {
-                        value.* = allocator.dupe(u8, std.mem.span(data[idx])) catch unreachable;
-                            } else {
-                        @compileError("Unimplemented");
-                        }
-                    return;
+            if (hm.get(name)) |idx| {
+                if (p.child == u8 and p.size == .slice) {
+                    value.* = allocator.dupe(u8, std.mem.span(data[idx])) catch unreachable;
+                } else {
+                    @compileError("Unimplemented");
                 }
+                return;
+            }
             std.debug.print("name: {s}\n", .{name});
             unreachable;
         },
-        .@"struct" =>|s| {
-            inline for (s.fields)|field|{
-            if(comptime Constraints.resolveProps(field.type).hasPropsSet()){
-                var temp: @FieldType(field.type, "inner") = undefined;
-                rebuildType(@FieldType(field.type, "inner"), allocator, &temp, field.name, hm, data );
-                @field(value, field.name) = .set(temp);
-            } else {
-                if(name.len == 0) {
-                    rebuildType(field.type, allocator, &@field(value, field.name), field.name, hm, data );
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                if (comptime Constraints.resolveProps(field.type).hasPropsSet()) {
+                    var temp: @FieldType(field.type, "inner") = undefined;
+                    rebuildType(@FieldType(field.type, "inner"), allocator, &temp, field.name, hm, data);
+                    @field(value, field.name) = .set(temp);
                 } else {
-                    rebuildType(field.type, allocator, &@field(value, field.name), name ++ "_" ++ field.name, hm, data);
+                    if (name.len == 0) {
+                        rebuildType(field.type, allocator, &@field(value, field.name), field.name, hm, data);
+                    } else {
+                        rebuildType(field.type, allocator, &@field(value, field.name), name ++ "_" ++ field.name, hm, data);
+                    }
                 }
-             }
-        }
+            }
         },
         else => |s| @compileLog(s),
     }
@@ -175,12 +182,12 @@ pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayLi
             };
             const t = builder.*.?.al.addOne() catch @panic("Out of Memory\n");
             const hm = &builder.*.?.hm;
-            for(0..@intCast(count))|idx|{
+            for (0..@intCast(count)) |idx| {
                 hm.put(std.mem.span(cols[idx]), idx) catch @panic("Out of Memory\n");
             }
             const allocatorInner = hm.allocator;
             _ = structInfo;
-            rebuildType(RetType, allocatorInner,t, "" ,hm, data);
+            rebuildType(RetType, allocatorInner, t, "", hm, data);
             return 0;
         }
     }.cb;
@@ -443,7 +450,8 @@ test "Zite MaoMao" {
             userPreferred: ?[]const u8 = null,
         };
         const Type = enum {
-            ANIME,            MANGA,
+            ANIME,
+            MANGA,
         };
         const Format = enum {
             TV,
@@ -499,7 +507,7 @@ test "Zite MaoMao" {
         season: Season = .SPRING,
         seasonYear: ?u32 = 2000,
         startDate: Date = .{ .year = 2000, .month = 2, .day = 1 },
-        endDate: ?Date = .{.year = 2001, .month = 1, .day = 3 },
+        endDate: ?Date = .{ .year = 2001, .month = 1, .day = 3 },
         //     status: Types.Media.Status,
         //     averageScore: ?u32,
         //

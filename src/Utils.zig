@@ -15,8 +15,8 @@ fn genInsertConflicts(comptime fieldType: type, name: []const u8) []const u8 {
                 }
             }
         },
-        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertConflicts(o.child, name) else std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
-        inline  .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
+        .optional => |o| Query = if (@typeInfo(o.child) == .@"struct") genInsertConflicts(o.child, name) else std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
+        inline .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}=excluded.{s}", .{ Query, name, name }),
         else => |t| @compileLog(t),
     }
     Query = Query ++ "";
@@ -37,7 +37,7 @@ fn genInsertValues(comptime fieldType: type) []const u8 {
                 }
             }
         },
-        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertValues(o.child) else std.fmt.comptimePrint("{s}?", .{ Query }),
+        .optional => |o| Query = if (@typeInfo(o.child) == .@"struct") genInsertValues(o.child) else std.fmt.comptimePrint("{s}?", .{Query}),
         inline .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}?", .{Query}),
         else => |t| @compileLog(t),
     }
@@ -58,7 +58,7 @@ fn genInsertValuesForType(comptime fieldType: type, comptime name: []const u8, p
                 }
             }
         },
-        .optional =>|o| Query = if(@typeInfo(o.child) == .@"struct") genInsertValuesForType(o.child, name, props) else std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
+        .optional => |o| Query = if (@typeInfo(o.child) == .@"struct") genInsertValuesForType(o.child, name, props) else std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
         inline .int, .pointer, .@"enum" => Query = std.fmt.comptimePrint("{s}{s}", .{ Query, name }),
         else => |t| @compileLog(t, props, name),
     }
