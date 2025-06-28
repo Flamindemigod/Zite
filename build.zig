@@ -28,14 +28,10 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
-}
-
-pub fn module(b: *std.Build) *std.Build.Module {
     const pubMod = b.addModule("Zite", .{
         .root_source_file = b.path("src/Zite.zig"),
         .link_libc = true,
     });
     pubMod.addCSourceFile(.{ .file = b.path("sqlite/sqlite3.c") });
     pubMod.addIncludePath(b.path("sqlite"));
-    return pubMod;
 }
