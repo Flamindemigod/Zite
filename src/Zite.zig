@@ -249,7 +249,7 @@ fn bindValue(self: *Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fie
         },
         .pointer => |p| {
             if (p.child == u8 and p.size == .slice) {
-                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len), null));
+                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len), sqlite.SQLITE_TRANSIENT));
                 idx.* += 1;
             } else if (p.size == .slice) {
                 const str = try std.json.stringifyAlloc(self.allocator.allocator(), value, .{
@@ -258,7 +258,7 @@ fn bindValue(self: *Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fie
                     .escape_unicode = true,
                     .whitespace = .minified,
                 });
-                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, str.ptr, @intCast(str.len), null));
+                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, str.ptr, @intCast(str.len), sqlite.SQLITE_TRANSIENT));
                 idx.* += 1;
             } else {
                 @compileError("Unimplemented");
