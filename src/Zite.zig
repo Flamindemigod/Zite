@@ -123,17 +123,22 @@ fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *Ret
                 if (isAllNull) {
                     value.* = null;
                 } else {
-                    rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
+                    var t: o.child = undefined;
+                    rebuildType(o.child, allocator, &t, name, hm, data);
+                    value.* = t;
                 }
                 return;
             }
             if (hm.get(name)) |idx| {
                 if (data[idx] == null) {
                     value.* = null;
-                } else rebuildType(o.child, allocator, &(value.*.?), name, hm, data);
+                } else {
+                    var t: o.child = undefined;
+                    rebuildType(o.child, allocator, &t, name, hm, data);
+                    value.* = t;
+                }
                 return;
             }
-            std.debug.print("name:{s}\n", .{name});
             unreachable;
         },
         .pointer => |p| {
@@ -151,7 +156,6 @@ fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *Ret
                 }
                 return;
             }
-            std.debug.print("name: {s}\n", .{name});
             unreachable;
         },
         .@"struct" => |s| {
