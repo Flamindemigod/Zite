@@ -276,6 +276,7 @@ pub fn bindAndExec(self: *Zite, comptime stmt: []const u8, value: anytype) !void
         try self.bindValue(ppStmt, &i, field.type, @field(value, field.name));
     }
     try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
+    try unwrapError(self.db, sqlite.sqlite3_clear_bindings(ppStmt));
     try unwrapError(self.db, sqlite.sqlite3_finalize(ppStmt));
     _ = self.allocator.reset(.retain_capacity);
 }

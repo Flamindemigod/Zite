@@ -88,8 +88,11 @@ pub fn InsertStatement(comptime table: type, comptime name: []const u8) []const 
 
         //Generate Conflicts
         for (std.meta.fields(table), 0..) |field, i| {
-            if (std.mem.eql(u8, field.name, primary)) continue;
-            if (i > 0) Query = Query ++ " ";
+            if (std.mem.eql(u8, field.name, primary)) {
+                if (Query[Query.len - 1] == ',') Query = Query[0 .. Query.len - 1];
+                continue;
+            }
+            Query = Query ++ " ";
             Query = std.fmt.comptimePrint("{s}{s}", .{ Query, genInsertConflicts(field.type, field.name) });
             if (i < std.meta.fields(table).len - 1) Query = Query ++ ",";
         }
