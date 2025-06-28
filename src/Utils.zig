@@ -147,6 +147,15 @@ fn genCreateForType(comptime ftype: type, comptime name: []const u8, comptime pr
                 if (!props.PrimaryKey) {
                     if (dv) |dvu| Query = std.fmt.comptimePrint("{s} DEFAULT '{s}'", .{ Query, dvu });
                 }
+            } else if (p.size == .slice) {
+                Query = Query ++ name ++ " TEXT";
+                const propArr = props.getSetProps();
+                for (propArr) |prop| {
+                    Query = std.fmt.comptimePrint("{s} {s}", .{ Query, Constraints.Props.Values[@intFromEnum(prop)] });
+                }
+                if (!props.PrimaryKey) {
+                    if (dv) |dvu| Query = std.fmt.comptimePrint("{s} TEXT '{any}'", .{ Query, std.json.fmt(dvu, .{}) });
+                }
             } else {
                 @compileError("Unimplemented");
             }

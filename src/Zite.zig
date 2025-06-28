@@ -140,6 +140,12 @@ fn rebuildType(comptime RetType: type, allocator: std.mem.Allocator, value: *Ret
             if (hm.get(name)) |idx| {
                 if (p.child == u8 and p.size == .slice) {
                     value.* = allocator.dupe(u8, std.mem.span(data[idx])) catch unreachable;
+                } else if (p.size == .slice) {
+                    const v = std.json.parseFromSliceLeaky(RetType, allocator, std.mem.span(data[idx]), .{
+                        .allocate = .alloc_always,
+                        .ignore_unknown_fields = true,
+                    }) catch unreachable;
+                    value.* = v;
                 } else {
                     @compileError("Unimplemented");
                 }
@@ -200,7 +206,7 @@ pub fn exec(self: *Zite, comptime RetType: type, stmt: []const u8) !?std.ArrayLi
     return if (builder) |b| b.al else null;
 }
 
-fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fieldType: type, value: fieldType) !void {
+fn bindValue(self: *Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, comptime fieldType: type, value: fieldType) !void {
     const has_props = comptime Constraints.resolveProps(fieldType).getSetProps().len != 0;
     const field_type = if (has_props) @FieldType(fieldType, "inner") else fieldType;
     switch (@typeInfo(field_type)) {
@@ -241,6 +247,15 @@ fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, compti
             if (p.child == u8 and p.size == .slice) {
                 try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, value.ptr, @intCast(value.len), null));
                 idx.* += 1;
+            } else if (p.size == .slice) {
+                const str = try std.json.stringifyAlloc(self.allocator.allocator(), value, .{
+                    .emit_null_optional_fields = false,
+                    .emit_strings_as_arrays = false,
+                    .escape_unicode = true,
+                    .whitespace = .minified,
+                });
+                try unwrapError(self.db, sqlite.sqlite3_bind_text(stmt, idx.*, str.ptr, @intCast(str.len), null));
+                idx.* += 1;
             } else {
                 @compileError("Unimplemented");
             }
@@ -249,7 +264,7 @@ fn bindValue(self: *const Zite, stmt: ?*sqlite.sqlite3_stmt, idx: *c_int, compti
     }
 }
 
-pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype) !void {
+pub fn bindAndExec(self: *Zite, comptime stmt: []const u8, value: anytype) !void {
     var ppStmt: ?*sqlite.sqlite3_stmt = null;
     try unwrapError(self.db, sqlite.sqlite3_prepare_v2(self.db, stmt.ptr, stmt.len, &ppStmt, null));
     var i: c_int = 1;
@@ -258,6 +273,7 @@ pub fn bindAndExec(self: *const Zite, comptime stmt: []const u8, value: anytype)
     }
     try unwrapError(self.db, sqlite.sqlite3_step(ppStmt));
     try unwrapError(self.db, sqlite.sqlite3_finalize(ppStmt));
+    _ = self.allocator.reset(.retain_capacity);
 }
 
 test "Open DB" {
@@ -503,20 +519,20 @@ test "Zite MaoMao" {
         description: ?[]const u8 = null,
         type: Type = .ANIME,
         format: Format = Format.TV,
-        source: Source = .ORIGINAL,
+        source: ?Source = null,
         season: Season = .SPRING,
         seasonYear: ?u32 = 2000,
         startDate: Date = .{ .year = 2000, .month = 2, .day = 1 },
         endDate: ?Date = .{ .year = 2001, .month = 1, .day = 3 },
-        //     status: Types.Media.Status,
-        //     averageScore: ?u32,
-        //
-        //     duration: ?u32,
-        //     episodes: ?u32,
-        //     chapters: ?u32,
-        //     volumes: ?u32,
-        //     countryOfOrigin: Types.String,
-        //     genres: []Types.String,
+        // status: Types.Media.Status,
+        averageScore: ?u32 = 69,
+
+        duration: ?u32 = null,
+        episodes: ?u32 = 420,
+        chapters: ?u32 = 0,
+        volumes: ?u32 = 0,
+        countryOfOrigin: []const u8 = "JP",
+        genres: []const []const u8 = &.{ "romanace", "comedy", "slice of life" },
     };
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -526,7 +542,7 @@ test "Zite MaoMao" {
     defer (std.fs.cwd().deleteFile(".TestMaoMao.db") catch {});
     defer db.deinit();
     {
-        const stmt = Utils.TableToCreateStatement(test_struct, "Main");
+        const stmt = comptime Utils.TableToCreateStatement(test_struct, "Main");
         _ = try db.exec(void, stmt);
     }
     const t = test_struct{};
